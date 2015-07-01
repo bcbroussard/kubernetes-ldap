@@ -49,59 +49,26 @@ func main() {
 				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
 				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
 				// If you enable these, most browsers will always choose the
-				// lower security strength option.
+				// lower security strength option. TODO(dlg): check that Chrome
+				// can still connect...
 				// tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 				// tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
 			},
 			SessionTicketsDisabled: true, // Go's session tickets compromise forward secrecy
 			MinVersion:             tls.VersionTLS12,
 			CurvePreferences: []tls.CurveID{
+				tls.CurveP256, // constant-time, but twist does not have cofactor 1
 				tls.CurveP384, // NB: Go's implementation isn't constant time as of this writing (but hopefully will be), but this is hopefully not relevant for its use in ECDHE (since at most one fixed-base and one variable-base scalar multiplication are performed)
-				tls.CurveP256,
 			},
 		},
 	}
 
 	// TODO(dlg): This deserves its own function, obviously.
-	authProxy := authproxy.ReverseProxy{
-		Director: func(r *http.Request) (err error) {
-			token, ok := r.Header[headerName]
-			if !ok {
-				token, ok = r.Cookie(cookieName)
-			}
-			if ok {
-				tokenStatus, scope := verifyToken(token)
-				switch tokenStatus {
-				case TokenExpired:
-					return authproxy.StatusError{
-						StatusCode: http.StatusProxyAuthRequired,
-						Message:    "token expired",
-					}
-				case TokenInvalid:
-					return authproxy.StatusError{StatusCode: http.StatusUnauthorized}
-				case TokenValid:
-					err = nil
-					return
-				}
-			}
-			// Note that a token will be reissued (and refreshed) every time a
-			// username and password are included via basic auth.
-			if r.Username != "" {
-				// TODO: pool LDAP connections
-				scope := CheckAuth(r.Username, r.Password)
-				token = generateToken(r.Username, scope)
-
-			}
-
-			// Probably want a special case to handle return the JWS as the body?
-
-			// All attempts at finding a way to authorize this access have failed.
-			// So we deny the request.
-			return authproxy.StatusError{StatusCode: http.StatusUnauthorized}
-		},
+	prox := authproxy.ReverseProxy{
+		Director: ldap.LDAPAuthDirector,
 	}
 
-	srv.Handler = authProxy
+	srv.Handler = prox
 
 	glog.Fatalf(srv.ListenAndServeTLS(certfile, keyfile))
 
