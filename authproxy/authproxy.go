@@ -4,14 +4,13 @@
 
 // HTTP reverse proxy handler
 
-package httputil
+package authproxy
 
 import (
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"

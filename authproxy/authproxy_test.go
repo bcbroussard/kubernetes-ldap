@@ -4,7 +4,7 @@
 
 // Reverse proxy tests.
 
-package httputil
+package authproxy
 
 import (
 	"errors"
