@@ -7,14 +7,16 @@
 package httputil
 
 import (
+	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/golang/glog"
 )
 
 // onExitFlushLoop is a callback set by tests to detect the state of the
@@ -29,7 +31,7 @@ type ReverseProxy struct {
 	// the request into a new request to be sent
 	// using Transport. Its response is then copied
 	// back to the original client unmodified.
-	Director func(*http.Request)
+	Director func(*http.Request) error
 
 	// The transport used to perform proxy requests.
 	// If nil, http.DefaultTransport is used.
@@ -41,11 +43,26 @@ type ReverseProxy struct {
 	// If zero, no periodic flushing is done.
 	FlushInterval time.Duration
 
-	// ErrorLog specifies an optional logger for errors
+	// Errorf specifies an optional function which logs errors
 	// that occur when attempting to proxy the request.
-	// If nil, logging goes to os.Stderr via the log package's
-	// standard logger.
-	ErrorLog *log.Logger
+	// If nil, errors are logged via glog.Errorf. Note that you
+	// must call flag.Parse to see any output from glog.
+	Errorf func(format string, v ...interface{})
+}
+
+// StatusError represents an error along with a status code
+type StatusError struct {
+	StatusCode int
+	Message    string
+}
+
+// Error converts a StatusError to an error string.
+func (e *StatusError) Error() string {
+	s := e.Message
+	if s == "" {
+		s = http.StatusText(e.StatusCode)
+	}
+	return fmt.Sprintf("%d: %s", e.StatusCode, s)
 }
 
 func singleJoiningSlash(a, b string) string {
@@ -66,7 +83,7 @@ func singleJoiningSlash(a, b string) string {
 // the target request will be for /base/dir.
 func NewSingleHostReverseProxy(target *url.URL) *ReverseProxy {
 	targetQuery := target.RawQuery
-	director := func(req *http.Request) {
+	director := func(req *http.Request) error {
 		req.URL.Scheme = target.Scheme
 		req.URL.Host = target.Host
 		req.URL.Path = singleJoiningSlash(target.Path, req.URL.Path)
@@ -75,6 +92,7 @@ func NewSingleHostReverseProxy(target *url.URL) *ReverseProxy {
 		} else {
 			req.URL.RawQuery = targetQuery + "&" + req.URL.RawQuery
 		}
+		return nil
 	}
 	return &ReverseProxy{Director: director}
 }
@@ -155,7 +173,17 @@ func (p *ReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	p.Director(outreq)
+	// If the Director reports an error, abort immediately,
+	// writing the error code to the ResponseWriter.
+	if err := p.Director(outreq); err != nil {
+		p.logf("error proxying request: %s", err)
+		if statusErr, ok := err.(*StatusError); ok {
+			http.Error(rw, statusErr.Error(), statusErr.StatusCode)
+			return
+		}
+		http.Error(rw, "501", http.StatusInternalServerError)
+		return
+	}
 	outreq.Proto = "HTTP/1.1"
 	outreq.ProtoMajor = 1
 	outreq.ProtoMinor = 1
@@ -185,6 +213,7 @@ func (p *ReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		if prior, ok := outreq.Header["X-Forwarded-For"]; ok {
 			clientIP = strings.Join(prior, ", ") + ", " + clientIP
 		}
+		// TODO(dlg): Do we want to sign this?
 		outreq.Header.Set("X-Forwarded-For", clientIP)
 	}
 
@@ -224,10 +253,10 @@ func (p *ReverseProxy) copyResponse(dst io.Writer, src io.Reader) {
 }
 
 func (p *ReverseProxy) logf(format string, args ...interface{}) {
-	if p.ErrorLog != nil {
-		p.ErrorLog.Printf(format, args...)
+	if p.Errorf != nil {
+		p.Errorf(format, args...)
 	} else {
-		log.Printf(format, args...)
+		glog.Errorf(format, args...)
 	}
 }
 

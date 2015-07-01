@@ -7,6 +7,7 @@
 package httputil
 
 import (
+	"errors"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -23,6 +24,8 @@ const fakeHopHeader = "X-Fake-Hop-Header-For-Test"
 func init() {
 	hopHeaders = append(hopHeaders, fakeHopHeader)
 }
+
+var errorfDiscarder = log.New(ioutil.Discard, "", 0).Printf
 
 func TestReverseProxy(t *testing.T) {
 	const backendResponse = "I am the backend"
@@ -250,7 +253,7 @@ func TestReverseProxyCancellation(t *testing.T) {
 
 	// Discards errors of the form:
 	// http: proxy error: read tcp 127.0.0.1:44643: use of closed network connection
-	proxyHandler.ErrorLog = log.New(ioutil.Discard, "", 0)
+	proxyHandler.Errorf = errorfDiscarder
 
 	frontend := httptest.NewServer(proxyHandler)
 	defer frontend.Close()
@@ -269,5 +272,53 @@ func TestReverseProxyCancellation(t *testing.T) {
 		// Get http://127.0.0.1:58079: read tcp 127.0.0.1:58079:
 		//    use of closed network connection
 		t.Fatal("DefaultClient.Do() returned nil error")
+	}
+}
+
+func TestReverseProxyAbort(t *testing.T) {
+	rp := &ReverseProxy{
+		Director: func(_ *http.Request) error {
+			return errors.New("this is a string error without a status code; the result should be a 501")
+		},
+		Errorf: errorfDiscarder,
+	}
+
+	frontend := httptest.NewServer(rp)
+	defer frontend.Close()
+	getReq, _ := http.NewRequest("GET", frontend.URL, nil)
+
+	resp, err := http.DefaultClient.Do(getReq)
+	if resp == nil {
+		t.Errorf("response was nil, but an error should have occurred: %+v", err)
+	}
+	if err != nil {
+		t.Errorf("response was not nil, but there wasn't an error!: %+v", resp)
+	}
+	if resp.StatusCode != 500 {
+		t.Errorf("should have gotten an internal server, but got a %d: %+v", resp)
+	}
+}
+
+func TestReverseProxyAbortStatusError(t *testing.T) {
+	rp := &ReverseProxy{
+		Director: func(_ *http.Request) error {
+			return &StatusError{StatusCode: 502}
+		},
+		Errorf: errorfDiscarder,
+	}
+
+	frontend := httptest.NewServer(rp)
+	defer frontend.Close()
+	getReq, _ := http.NewRequest("GET", frontend.URL, nil)
+
+	resp, err := http.DefaultClient.Do(getReq)
+	if resp == nil {
+		t.Errorf("response was nil, but an error should have occurred: %+v", err)
+	}
+	if err != nil {
+		t.Errorf("response was not nil, but there wasn't an error!: %+v", resp)
+	}
+	if resp.StatusCode != 502 {
+		t.Errorf("should have gotten a 502, but got a %d with body: %+v", resp)
 	}
 }
