@@ -4,7 +4,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/go-ldap/ldap"
@@ -38,7 +37,7 @@ type LDAPPool struct {
 	c *ldap.Conn // an LDAP server connection
 }
 
-func NewLDAPService(address string) (c *LDAPPool) {
+func NewLDAPPool(address string) (c *LDAPPool) {
 	return &LDAPPool{
 		BaseDN: "dn=" + strings.Join(strings.Split(address, "."), ",dn="),
 		Errorf: glog.Errorf,
@@ -65,11 +64,6 @@ func (l *LDAPPool) CantBind(userDN string, password []byte) (err error) {
 	}
 	defer c.Close()
 	return c.Bind(userDN, string(password))
-}
-
-func isLDAPSafe(username string) bool {
-	// TODO!!!
-	return true
 }
 
 // filter checks that the username is safe to pass to an LDAP server
@@ -114,7 +108,7 @@ func (l *LDAPPool) CantFind(username string) (userDN string, err error) {
 		Scope:        ldap.ScopeWholeSubtree,
 		DerefAliases: ldap.NeverDerefAliases, // ????
 		SizeLimit:    2,
-		TimeLimit:    0,
+		TimeLimit:    10, // make configurable?
 		TypesOnly:    false,
 		Filter:       userFilter,
 	}
