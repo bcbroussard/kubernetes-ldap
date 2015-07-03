@@ -17,6 +17,9 @@ type Issuer struct {
 	LogToken ([]byte)
 }
 
+type Verifier struct {
+}
+
 const (
 	curveName = "P-256"    // curveName is the name of the ECDSA curve
 	curveJose = jose.ES256 // curveJose is the name of the JWS algorithm
@@ -75,4 +78,9 @@ func (iss *Issuer) Issue(token *pb.Token) (token []byte, err error) {
 	return []byte(s)
 }
 
-// Verify checks that a token is valid.
+// Verify checks that a token's signature is valid, and that the
+// token was not issued in the future. (This is a rather serious
+// problem, as it indicates an attack on clock synchronization,
+// so it's probably a good idea to have some way of signaling this
+// back to the application...so maybe not in here at all.)
+//func (
