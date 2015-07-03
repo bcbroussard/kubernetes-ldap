@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/go-ldap/ldap"
@@ -13,20 +14,28 @@ import (
 
 // LDAPPoool is currently not a pool at all.
 type LDAPPool struct {
-	// BaseDN is the base used for all LDAP subtree queries.
+	// BaseDN is the DN of the subtree to query
 	BaseDN string
 
 	// LDAP server connection configuration
-	Network   string
 	Address   string
 	Insecure  bool
 	TLSConfig *tls.Config
-	c         *ldap.Conn
 
+	// Username is the RDN (to BaseDN) of the administrator
 	Username string
-	Password []byte // a byte-slice, per the LDAP specification
+	// Password is the LDAP basic auth bind password which, per the
+	// LDAP specification, is an orbitrary octet string.
+	Password []byte
+
+	// FilterString specifies the query -- if any -- that must be
+	// performed to lookup the DN to attempt binding with.
+	FilterString string
 
 	Errorf func(string, ...interface{})
+
+	// Opaque members of the structure
+	c *ldap.Conn // an LDAP server connection
 }
 
 func NewLDAPService(address string) (c *LDAPPool) {
@@ -37,38 +46,53 @@ func NewLDAPService(address string) (c *LDAPPool) {
 }
 
 func (l *LDAPPool) dial() (c *ldap.Conn, err error) {
-	if l.Network == "" {
-		l.Network = "tcp"
-	}
 	// TODO(dlg): remove support for non-TLS LDAP connections entirely
 	switch {
 	case !l.Insecure && l.TLSConfig == nil:
 		err = fmt.Errorf("insecure not set, but no TLS configuration provided")
 	case l.Insecure && l.TLSConfig == nil:
-		c, err = ldap.Dial(l.Network, l.Address)
+		c, err = ldap.Dial("tcp", l.Address)
 	default:
-		c, err = ldap.DialTLS(l.Network, l.Address, l.TLSConfig)
-	}
-	if err != nil {
-		if c != nil {
-			c.Close()
-			c = nil
-		}
+		c, err = ldap.DialTLS("tcp", l.Address, l.TLSConfig)
 	}
 	return
 }
 
-func (l *LDAPPool) CantBind(username string, password []byte) (err error) {
+func (l *LDAPPool) CantBind(userDN string, password []byte) (err error) {
 	c, err := l.dial()
 	if err != nil {
 		return
 	}
 	defer c.Close()
-	return c.Bind(username, string(password))
+	return c.Bind(userDN, string(password))
 }
 
-/*
-func (l *LDAPPool) CantFind(username string) (userdn string, err error) {
+func isLDAPSafe(username string) bool {
+	// TODO!!!
+	return true
+}
+
+// filter checks that the username is safe to pass to an LDAP server
+// as an attribute value, and interpolates it into the provided filter
+// string
+func (l *LDAPPool) filter(username string) (filter string, err error) {
+	if ok := isLDAPSafe(username); !ok {
+		err = fmt.Errorf("provided username %s is not LDAP-safe", username)
+		return
+	}
+	filter = strings.Replace(l.FilterString, "{{username}}", username)
+	return
+}
+
+func (l *LDAPPool) SetFilter(filter string) (err error) {
+	if strings.Count("{{username}}") < 1 {
+		return fmt.Errorf("no {{username}} to interpolate in the filter: %s", filter)
+	}
+	l.FilterString = filter
+	return
+}
+
+func (l *LDAPPool) CantFind(username string) (userDN string, err error) {
 	c, err := l.dial()
 	if err != nil {
 		return
@@ -79,6 +103,12 @@ func (l *LDAPPool) CantFind(username string) (userdn string, err error) {
 		l.Errorf("error binding as app user %s: %s", l.Username, err)
 		return
 	}
+
+	userFilter, err := l.filter(username)
+	if err != nil {
+		return
+	}
+
 	req := &ldap.SearchRequest{
 		BaseDN:       l.BaseDN,
 		Scope:        ldap.ScopeWholeSubtree,
@@ -86,22 +116,26 @@ func (l *LDAPPool) CantFind(username string) (userdn string, err error) {
 		SizeLimit:    2,
 		TimeLimit:    0,
 		TypesOnly:    false,
-		Filter:       fmt.Sprintf("cn=%s", username), // TODO(dlg): input sanitizization for LDAP!!!!!!
+		Filter:       userFilter,
 	}
 	result, err := c.Search(req)
-	if result {
-		// for testing
-		l.Errorf("%s", result.PrettyPrint(2))
-	}
-	if len(result.Entries) == 1 {
-		userdn = result.Entries[0].DN
-		err = nil
+	if err != nil {
 		return
 	}
 
+	switch {
+	case len(result.Entries) == 1:
+		userDN = result.Entries[0].DN
+		err = nil
+	case len(result.Entries) == 0:
+		err = fmt.Errorf("no result for the query %s", req.Filter)
+	case len(result.Entries) > 1:
+		err = fmt.Errorf("multiple results for the query %s: %+v", req.Filter, result.Entries)
+	}
 	return
 }
-*/
+
+// TODO(dlg): MOVE TO ANOTHER FILE
 func isAlreadyAuthorized(cookieName, headerName string, r *http.Request) (token []byte, err error) {
 	// Check whether the auth token is set in a header,
 	var tokens []string
@@ -151,28 +185,25 @@ func isAlreadyAuthorized(cookieName, headerName string, r *http.Request) (token 
 	return
 }
 
-func (l *LDAPPool) LDAPAuthDirector(cookieName, headerName string) func(r *http.Request) (err error) {
+func (l *LDAPPool) RequireLDAPAuth(cookieName, headerName string) func(r *http.Request) (err error) {
 	return func(r *http.Request) (err error) {
 		token, err := []byte{}, nil // isAlreadyAuthorized(cookieName, headerName, r)
 		token = nil
 		if username, password, ok := r.BasicAuth(); token == nil && ok {
-			// TODO: pool LDAP connections
-			// CRITICAL: If both lookups are not performed, it is trivial for
-			// an attacker to scrape valid usernames from this endpoint. You
-			// must ensure that BOTH queries are executed against the LDAP
-			// server, regardless of whether the user exists.
-			//
-			// (And this is clearly not sufficient to rule out the attack,
-			// because we have to do some parsing. We can fix this by adding
-			// an RT bound, if we really need to.)
-			//			cantFind := l.CantFind(r.Username)
+			// This leads to a timing vulnerability that an attacker can use
+			// to guess valid usernames, in order to find targets to guess
+			// passwords against.
 			var cantFind *error
+			userDN := username
+			if l.FilterString != "" {
+				userDN, err = l.CantFind(username)
+			}
 			cantBind := l.CantBind(username, []byte(password))
 
 			// Return an error, taking care not to indicate whether the username
 			// is valid.
 			if cantFind != nil || cantBind != nil {
-				// TODO(pluggable logger, again, should execute in constant time,
+				// TODO(pluggable logger which again should execute in constant time,
 				// which likely requires *always* spawning a goroutine and waiting
 				// before logging)
 				err = &authproxy.StatusError{StatusCode: http.StatusUnauthorized}
