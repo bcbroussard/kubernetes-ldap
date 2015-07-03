@@ -40,18 +40,6 @@ message LDAPAssertion {
   StringAssertions ldap_attributes = 1;
 }
 
-// SignedToken is not encrypted, mainly because it makes it
-// rather difficult for other people to understand what it's
-// doing. If these tokens will be used in a public cloud,
-// where it is reasonable to assume a global passive adversary,
-// you almost certainly want encrypted signed tokens (not
-// implemented in this library at the moment).
-message SignedToken {
-  Token token     = 1;
-  bytes signature = 2;
-  bytes opaque    = 3;
-}
-
 /* Basic example, predicates 
 
 {"username": "dlg",

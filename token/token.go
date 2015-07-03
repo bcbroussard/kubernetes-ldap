@@ -9,15 +9,20 @@ import (
 	jose "github.com/square/go-jose"
 )
 
+// Issuer represents an issuer of tokens under a particular public key.
 type Issuer struct {
+	Verifier
 	signer *jose.Signer
-	// LogToken is an optional user-provided function to log each
+	// LogTokenIssued is an optional user-provided function to log each
 	// token that is issued. If nil, no logging is performed. It
-	// should not panic, or cause an error.
-	LogToken ([]byte)
+	// should not panic; if it returns an error, the token is not
+	// return to the caller of Issue.
+	LogTokenIssued func(signedToken []byte, unsignedToken *pb.Token) error
 }
 
+// Verifier represents an object that can verify tokens.
 type Verifier struct {
+	publicKey *ecdsa.PublicKey
 }
 
 const (
@@ -53,34 +58,57 @@ func NewIssuer(key []byte) (iss *Issuer, err error) {
 		return
 	}
 	iss = &Issuer{
-		signer: &signer,
+		signer:    &signer,
+		publicKey: ecdsaKey.PublicKey,
 	}
 	return
 }
 
 // Issue issues a new, signed token, logging it to iss.LogToken
 // if that's non-nil.
-func (iss *Issuer) Issue(token *pb.Token) (token []byte, err error) {
+func (iss *Issuer) Issue(token *pb.Token) (signed string, err error) {
 	b, err := proto.Marshal(token)
 	if err != nil {
 		// panic? what are the conditions under which this can fail?
-		return err
+		return
 	}
 	jws, err := iss.signer.Sign(token)
 	if err != nil {
 		return
 	}
-	s, err := jws.CompactSerialize()
+	signed, err := jws.CompactSerialize()
 	if err != nil {
 		return
 	}
-	iss.LogToken([]byte(s))
-	return []byte(s)
+	// This optionally logs the token issuance; it is passed both
+	// the unsigned payload and the signed token. (For schemes in
+	// which the user has a private and public key, it's safe to
+	// log the signed token. Otherwise, please don't do that.)
+	// TODO(dlg): switch to SignedToken protobuf format
+	if iss.LogTokenIssued != nil {
+		err = iss.LogTokenIssued(s, b)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return s, nil
 }
 
 // Verify checks that a token's signature is valid, and that the
-// token was not issued in the future. (This is a rather serious
-// problem, as it indicates an attack on clock synchronization,
-// so it's probably a good idea to have some way of signaling this
-// back to the application...so maybe not in here at all.)
-//func (
+// protobuf is syntactically valid as a token.
+func (v *Verifier) Verify(s string) (token *pb.Token, err error) {
+	jws, err := jose.ParseSigned(s)
+	if err != nil {
+		return
+	}
+	payload, err := jws.Verify(v.publicKey)
+	if err != nil {
+		return
+	}
+	token := &pb.Token{}
+	err := proto.Unmarshal(payload, token)
+	if err != nil {
+		token = nil
+		return
+	}
+}
