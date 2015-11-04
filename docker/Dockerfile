@@ -1,25 +1,25 @@
 FROM debian:jessie
 
+ENV OPENLDAP_VERSION 2.4.40
+
 RUN apt-get update && \
-   	LC_ALL=C DEBIAN_FRONTEND=noninteractive apt-get install -y \
+   	LC_ALL=C DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
+        slapd=${OPENLDAP_VERSION}* && \
    	 	ldap-utils \
    	 	slapd && \
    	apt-get clean && \
    	rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-COPY config /tmp/config
-ADD run.sh /tmp/run.sh
-
-VOLUME /var/lib/ldap
-VOLUME /etc/ldap/slapd.d
-
-ENV ADMIN_PASS admin
-ENV ROOT_PASS passw0rd
-ENV DOMAIN kismatic.com
-ENV ORG Kismatic
+RUN mv /etc/ldap /etc/ldap.dist
 
 EXPOSE 389
 
-# Default command to run on boot
+VOLUME ["/etc/ldap", "/var/lib/ldap"]
 
-CMD ["bash","/tmp/run.sh"]
+COPY modules/ /etc/ldap.dist/modules
+
+COPY entrypoint.sh /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+
+CMD ["slapd", "-d", "32768", "-u", "openldap", "-g", "openldap"]
