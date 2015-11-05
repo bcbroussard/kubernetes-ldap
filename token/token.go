@@ -7,8 +7,7 @@ import (
 	"fmt"
 	"io/ioutil"
 
-	pb "./proto"
-	"github.com/golang/protobuf/proto"
+	pb "github.com/golang/protobuf/proto"
 	jose "github.com/square/go-jose"
 )
 
