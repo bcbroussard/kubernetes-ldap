@@ -144,6 +144,7 @@ func (e *Entry) SPrettyPrint(indent int) (s string) {
 	for _, attr := range e.Attributes {
 		s += attr.PrettyPrint(indent + 2)
 	}
+	return s
 }
 
 func (e *Entry) PrettyPrint(indent int) {
@@ -160,8 +161,10 @@ func (e *EntryAttribute) Print() {
 	fmt.Printf("%s: %s\n", e.Name, e.Values)
 }
 
-func (e *EntryAttribute) PrettyPrint(indent int) {
-	fmt.Printf("%s%s: %s\n", strings.Repeat(" ", indent), e.Name, e.Values)
+func (e *EntryAttribute) PrettyPrint(indent int) string {
+	s := fmt.Sprintf("%s%s: %s\n", strings.Repeat(" ", indent), e.Name, e.Values)
+	fmt.Println(s)
+	return s
 }
 
 type SearchResult struct {
