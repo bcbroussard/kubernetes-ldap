@@ -6,20 +6,29 @@
 	],
 	"Deps": [
 		{
+			"ImportPath": "github.com/codegangsta/cli",
+			"Comment": "1.2.0-122-g8cbee4b",
+			"Rev": "8cbee4b7192cea690c9f048e742e6b4c3525fd9e"
+		},
+		{
 			"ImportPath": "github.com/golang/glog",
 			"Rev": "44145f04b68cf362d9c4df2182967c2275eaefed"
 		},
 		{
 			"ImportPath": "github.com/golang/protobuf/proto",
-			"Rev": "a1dfa5ef89a13a0aa4be5a6f81179db10bfeea36"
+			"Rev": "087949061006daa57b3a3be58d77092cf65f6cf7"
 		},
 		{
 			"ImportPath": "github.com/spf13/pflag",
-			"Rev": "67cbc198fd11dab704b214c1e629a97af392c085"
+			"Rev": "08b1a584251b5b62f458943640fc8ebd4d50aaa5"
 		},
 		{
 			"ImportPath": "github.com/square/go-jose",
-			"Rev": "0f7a5126e23afc8d290d0c501873c6416c693d47"
+			"Rev": "37934a899dd03635373fd1e143936d32cfe48d31"
+		},
+		{
+			"ImportPath": "go.pedge.io/google-protobuf",
+			"Rev": "e65351045a010f78e5a00b21d2e5ce0b38f3c546"
 		},
 		{
 			"ImportPath": "gopkg.in/asn1-ber.v1",

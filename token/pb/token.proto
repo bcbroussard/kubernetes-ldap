@@ -16,7 +16,9 @@ enum TOKEN_VERSION {
 // underlying assertions.
 message Token {
   TOKEN_VERSION version                        = 1;
-  string       username                        = 2;
+  string        username                       = 2;
+  int64         expiresAt                      = 3;
+
   oneof assertions {
     StringAssertions     string_assertions     = 4;
     StructuredAssertions structured_assertions = 5;
@@ -40,11 +42,12 @@ message LDAPAssertion {
   StringAssertions ldap_attributes = 1;
 }
 
-/* Basic example, predicates 
+/* Basic example, predicates
 
 {"username": "dlg",
+ "expiresAt": 0,
  "structured_assertions":
-   {"LDAP": 
+   {"LDAP":
      {"@type": "LDAPAssertions",
       "ldap_attributes":
         {"OU": "cto_office",
@@ -55,4 +58,6 @@ message LDAPAssertion {
       }
     }
   }
+}
 */
+
