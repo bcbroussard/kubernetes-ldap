@@ -1,5 +1,18 @@
-Development
+# Development
 
+## Requirements
+```
+# Protobuf v3
+$ brew install protobuf --devel
+$ go get -u github.com/golang/protobuf/{proto,protoc-gen-go}
+```
+
+Protobuf structs are regenerated with:
+```
+go generate ./...
+```
+
+## Testing
 ```
 docker build -t kismatic/openldap .
 # with data-container
@@ -15,7 +28,7 @@ docker run -d -p 389:389 -e SLAPD_PASSWORD=admin -e SLAPD_CONFIG_PASSWORD=passw0
 
 ```
 export GO15VENDOREXPERIMENT=1
-godep go build cmd/...
+go build cmd/...
 
 go run k8s-ldap.go --ldap-insecure=true --apiserver=http://173.255.114.28:8080
 ```

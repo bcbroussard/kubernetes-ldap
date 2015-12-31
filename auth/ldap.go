@@ -1,13 +1,16 @@
 package auth
 
 import (
-	"crypto/tls"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/kismatic/kubernetes-ldap/ldap"
+	"github.com/kismatic/kubernetes-ldap/token"
+	"github.com/kismatic/kubernetes-ldap/token/pb"
 
 	log "github.com/golang/glog"
+	google_protobuf "go.pedge.io/google-protobuf"
 )
 
 // LdapAuth represents a connection, and associated lookup strategy,
@@ -24,23 +27,44 @@ type LdapAuth struct {
 	HeaderName string
 	CookieName string
 
-	TLSConfig *tls.Config
-	issuer    *token.Issuer
+	// TLSConfig *tls.Config
+	Issuer *token.Issuer
 }
 
 func (a *LdapAuth) setAuthToken(w http.ResponseWriter, username, userDN string) {
-	token, err = l.issuer.Issue(username, &pb.Token{
-		Username: username,
-		StringAssertions: map[string]string{
-			"ldapServer": a.LdapServer,
-			"userDN":     userDN,
+	var expiresAt int64
+	if a.Issuer.TokenExpiresAfter != 0 {
+		expiresAt = time.Now().Unix() + a.Issuer.TokenExpiresAfter*60
+	}
+
+	token, err := a.Issuer.Issue(username, &pb.Token{
+		Username:  username,
+		ExpiresAt: expiresAt,
+		// StringAssertions: map[string]string{
+		// 	"ldapServer": a.LdapServer,
+		// 	"userDN":     userDN,
+		// },
+		Assertions: []Token_StructuredAssertions{
+			&Token_StructuredAssertions{
+				StructuredAssertions: map[string]*google_protobuf.Any{
+					"LDAP": &LDAPAssertion{
+						LdapAttributes: &StringAssertions{
+							Assertions: map[string]string{
+								"ldapServer": a.LdapServer,
+								"userDN":     userDN,
+							},
+						},
+					},
+				},
+			},
 		},
 	})
+
 	cookie = &http.Cookie{
-		Name:     "k8s-auth",
+		Name:     a.CookieName,
 		Value:    token,
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   !a.Insecure,
 	}
 	http.SetCookie(w, cookie)
 	return
@@ -73,6 +97,8 @@ func (a *LdapAuth) RequireAuthorization(next http.HandlerFunc) HandlerFunc {
 
 		var token *pb.Token
 		var s0 string
+		var iss = a.Issuer
+
 		if header, ok := r.Header[a.HeaderName]; ok && len(header) == 1 {
 			token, err = iss.Verify(header[0])
 		}
@@ -82,6 +108,11 @@ func (a *LdapAuth) RequireAuthorization(next http.HandlerFunc) HandlerFunc {
 		if err != nil {
 			glog.Warningf("error authenticating a purported authorization")
 		}
+		if token == nil || err != nil {
+			writeBasicAuthError(w)
+			return
+		}
+		// Check expiresAt
 		if token == nil || err != nil {
 			writeBasicAuthError(w)
 			return

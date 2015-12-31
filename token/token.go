@@ -6,8 +6,11 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io/ioutil"
+	"os"
 
-	pb "github.com/golang/protobuf/proto"
+	"github.com/kismatic/kubernetes-ldap/token/pb"
+
+	proto "github.com/golang/protobuf/proto"
 	jose "github.com/square/go-jose"
 )
 
@@ -15,6 +18,12 @@ import (
 type Issuer struct {
 	Verifier
 	signer *jose.Signer
+
+	// TokenExpiresAfter is an optional value describing
+	// the number of minutes a token will expire after being issued.
+	// A value 0 will allow a token to never expire
+	TokenExpiresAfter int
+
 	// LogTokenIssued is an optional user-provided function to log each
 	// token that is issued. If nil, no logging is performed. It
 	// should not panic; if it returns an error, the token is not
@@ -44,11 +53,16 @@ func GenerateKeypair(filename string) (err error) {
 	if err != nil {
 		return
 	}
-	err = ioutil.WriteFile(filename+".priv", elliptic.Marshal(curveEll, priv.x, priv.y), FileMode(0600))
+	err = ioutil.WriteFile(filename+".priv", elliptic.Marshal(curveEll, priv.X, priv.Y), os.FileMode(0600))
 	if err != nil {
 		return
 	}
-	err = ioutil.WriteFile(filename+".pub", elliptic.Marshal(curveEll, pub.x, pub.y), FileMode(0644))
+
+	pub, err := ecdsa.GenerateKey(curveEll, rand.Reader)
+	if err != nil {
+		return
+	}
+	err = ioutil.WriteFile(filename+".pub", elliptic.Marshal(curveEll, pub.X, pub.Y), os.FileMode(0644))
 	return
 	// TODO(dlg): also write out JWK
 }
@@ -85,10 +99,17 @@ func NewIssuer(filename string) (iss *Issuer, err error) {
 	if err != nil {
 		return
 	}
-	iss = &Issuer{
-		signer:    &signer,
-		publicKey: ecdsaKey.PublicKey,
+
+	v, err := NewVerifier(filename)
+	if err != nil {
+		return
 	}
+
+	iss = &Issuer{
+		signer:   &signer,
+		Verifier: *v,
+	}
+
 	return
 }
 
@@ -100,11 +121,13 @@ func (iss *Issuer) Issue(token *pb.Token) (signed string, err error) {
 		// panic? what are the conditions under which this can fail?
 		return
 	}
-	jws, err := iss.signer.Sign(token)
+	s := *iss.signer
+
+	jws, err := s.Sign(b)
 	if err != nil {
 		return
 	}
-	signed, err := jws.CompactSerialize()
+	signed, err = jws.CompactSerialize()
 	if err != nil {
 		return
 	}
@@ -113,16 +136,16 @@ func (iss *Issuer) Issue(token *pb.Token) (signed string, err error) {
 	// which the user has a private and public key, it's safe to
 	// log the signed token. Otherwise, please don't do that.)
 	// TODO(dlg): switch to SignedToken protobuf format
-	if iss.LogTokenIssued != nil {
-		err = iss.LogTokenIssued(s, b)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return s, nil
+	// if iss.LogTokenIssued != nil {
+	// 	err = iss.LogTokenIssued(s, b)
+	// 	if err != nil {
+	// 		return nil, err
+	// 	}
+	// }
+	return signed, nil
 }
 
-// NewVerify reads a verification key file, and returns a verifier
+// NewVerifier reads a verification key file, and returns a verifier
 // to verify token objects.
 func NewVerifier(basename string) (v *Verifier, err error) {
 	buf, err := ioutil.ReadFile(basename + ".pub")
@@ -132,11 +155,32 @@ func NewVerifier(basename string) (v *Verifier, err error) {
 	pub := &ecdsa.PublicKey{
 		Curve: curveEll,
 	}
-	pub.x, pub.y = elliptic.Unmarshal(curveEll, buf)
-	jws, err := jose.LoadPublicKey(pub)
+
+	pub.X, pub.Y = elliptic.Unmarshal(curveEll, buf)
+
+	jws, err := jose.LoadPublicKey(buf)
 	if err != nil {
 		return
 	}
+	// Verify
+	ecdsaKey, ok := jws.(ecdsa.PublicKey)
+	if !ok {
+		err = fmt.Errorf("expected an ECDSA private key, but got a key of type %T", jws)
+		return
+	}
+	// and that it's on the expected curve.
+	if ecdsaKey.Params().Name != curveName {
+		err = fmt.Errorf("expected the key to use %s, but it's using %s", curveName, ecdsaKey.Params().Name)
+	}
+
+	v = &Verifier{
+		publicKey: pub,
+	}
+
+	return
+
+	///
+
 }
 
 // Verify checks that a token's signature is valid, and that the
@@ -150,10 +194,11 @@ func (v *Verifier) Verify(s string) (token *pb.Token, err error) {
 	if err != nil {
 		return
 	}
-	token := &pb.Token{}
-	err := proto.Unmarshal(payload, token)
+	token = &pb.Token{}
+	err = proto.Unmarshal(payload, token)
 	if err != nil {
 		token = nil
 		return
 	}
+	return
 }
